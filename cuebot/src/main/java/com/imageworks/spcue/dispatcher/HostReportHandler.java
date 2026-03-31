@@ -216,7 +216,7 @@ public class HostReportHandler {
             /*
              * Get the 25% of the total gpu memory to be used as a threshold
              */
-            long gpuMemThreshold = report.getHost().getTotalGpuMem() / 4;
+            long gpuMemThreshold = report.getHost().getTotalGpuMem() / 3;
             logger.trace("OD LOG - Host:" + host.getName() + " has total GPU memory: "
                     + report.getHost().getTotalGpuMem() + " KB, threshold set to " + gpuMemThreshold
                     + " KB");

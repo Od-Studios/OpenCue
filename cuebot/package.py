@@ -1,6 +1,6 @@
 name = "cuebot"
 
-version = "1.4.14"
+version = "1.4.15"
 
 authors = ["Open Cue Bot"]
 
