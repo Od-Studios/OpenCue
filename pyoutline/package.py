@@ -1,6 +1,6 @@
 name = "pyoutline"
 
-version = "1.4.11"
+version = "1.4.12"
 
 authors = ["Open Cue"]
 
@@ -12,7 +12,7 @@ build_requires = ["python-3.11", "loguru"]
 
 requires = [
     "python-3.11",
-    "pycue-1.4.11",
+    "pycue-1.4.11+<2",
 ]
 
 tools = ["pycuerun"]
