@@ -15,7 +15,8 @@ requires = [
     "PyYAML-6+<7",
     "six-1+<2",
     "future-1+<2",
-    "grpcio-1.83+<2"
+    "grpcio-1.83+<2",
+    "protobuf-7.35+<8",
 ]
 
 private_build_requires = ["grpcio_tools-1+<2", "grpcio-1+<2"]
