@@ -1,6 +1,6 @@
 name = "pycue"
 
-version = "1.4.11"
+version = "1.4.12"
 
 authors = ["Open Cue"]
 
@@ -15,6 +15,7 @@ requires = [
     "PyYAML-6+<7",
     "six-1+<2",
     "future-1+<2",
+    "grpcio-1.83+<2"
 ]
 
 private_build_requires = ["grpcio_tools-1+<2", "grpcio-1+<2"]
