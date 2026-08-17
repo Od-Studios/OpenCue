@@ -1,6 +1,6 @@
 name = "pycue"
 
-version = "1.4.12"
+version = "1.4.13"
 
 authors = ["Open Cue"]
 
