@@ -1,6 +1,6 @@
 name = "cuegui"
 
-version = "1.6.4"
+version = "1.6.5"
 
 authors = ["Open Cue"]
 
@@ -8,14 +8,14 @@ description = """
     GUI for Open Cue.
     """
 
-build_requires = ["cmake-3", "python-3.11", "PySide6-6+<7"]
+build_requires = ["cmake-3", "python-3.11+<4", "PySide6-6+<7"]
 
 requires = [
-    "python-3.11",
-    "pyoutline-1.4.11",
-    "pycue-1.4.11",
+    "python-3.11+<4",
+    "pyoutline-1.4.11+<2",
+    "pycue-1.4.11+<2",
     "PySide6-6+<7",
-    "cuebot-1.4.11",
+    "cuebot-1.4.11+<2",
     "QtPy-2+<3",
     "grpcio_tools-1+<2",
     "future-1+<2",
