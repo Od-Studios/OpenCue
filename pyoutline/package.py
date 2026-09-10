@@ -1,6 +1,6 @@
 name = "pyoutline"
 
-version = "1.4.12"
+version = "1.4.13"
 
 authors = ["Open Cue"]
 
@@ -8,10 +8,10 @@ description = """
     PyOutline library for OpenCue job construction.
     """
 
-build_requires = ["python-3.11", "loguru"]
+build_requires = ["python-3.11+<4", "loguru"]
 
 requires = [
-    "python-3.11",
+    "python-3.11+<4",
     "pycue-1.4.11+<2",
 ]
 
