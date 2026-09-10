@@ -1,6 +1,6 @@
 name = "pycue"
 
-version = "1.4.13"
+version = "1.4.14"
 
 authors = ["Open Cue"]
 
@@ -8,10 +8,10 @@ description = """
     Python API for OpenCue.
     """
 
-build_requires = ["python-3.11", "loguru"]
+build_requires = ["python-3.11+<4", "loguru"]
 
 requires = [
-    "python-3.11",
+    "python-3.11+<4",
     "PyYAML-6+<7",
     "six-1+<2",
     "future-1+<2",
