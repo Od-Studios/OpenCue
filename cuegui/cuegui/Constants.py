@@ -30,6 +30,7 @@ import yaml
 from qtpy import QtGui, QtWidgets
 
 __CONFIG_FILE_ENV_VAR = "CUEGUI_CONFIG_FILE"
+__PLUGIN_PATH_ENV_VAR = "CUEGUI_PLUGIN_PATH"
 __DEFAULT_INI_PATH_ENV_VAR = "CUEGUI_DEFAULT_INI_PATH"
 __DEFAULT_CONFIG_FILE_NAME = "cuegui.yaml"
 __DEFAULT_CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config", __DEFAULT_CONFIG_FILE_NAME)
@@ -139,6 +140,11 @@ DEFAULT_PLUGIN_PATHS = __config.get("paths.plugins")
 for i, path in enumerate(DEFAULT_PLUGIN_PATHS):
     if not os.path.isabs(path):
         DEFAULT_PLUGIN_PATHS[i] = os.path.abspath(os.path.join(os.path.dirname(__file__), path))
+# Packages add their own plugin folders through CUEGUI_PLUGIN_PATH, a list like PYTHONPATH, after
+# the configured ones. Each package appends its folder in its environment, so none of them needs
+# to own the one config file CUEGUI_CONFIG_FILE names, or replace CueGUI's own plugins.
+DEFAULT_PLUGIN_PATHS = DEFAULT_PLUGIN_PATHS + [
+    path for path in os.environ.get(__PLUGIN_PATH_ENV_VAR, "").split(os.pathsep) if path]
 
 LOGGER_FORMAT = __config.get("logger.format")
 LOGGER_LEVEL = __config.get("logger.level")
