@@ -23,6 +23,8 @@ paths.config: "./config"
 # be set via the CUEGUI_DEFAULT_INI_PATH environment variable.
 paths.default_ini_path: "./config"
 # Paths for CueGUI plugins.
+# More folders can be added with the CUEGUI_PLUGIN_PATH environment variable, a list like
+# PYTHONPATH; they are searched after these.
 paths.plugins: ["./plugins"]
 
 # How often the UI will refresh its contents. All values in milliseconds.

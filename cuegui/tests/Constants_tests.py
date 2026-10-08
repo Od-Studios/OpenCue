@@ -46,6 +46,19 @@ class ConstantsTests(pyfakefs.fake_filesystem_unittest.TestCase):
             os.path.join(os.path.dirname(cuegui.__file__), 'config', 'cuegui.yaml'), read_only=True)
         if 'CUEGUI_CONFIG_FILE' in os.environ:
             del os.environ['CUEGUI_CONFIG_FILE']
+        if 'CUEGUI_PLUGIN_PATH' in os.environ:
+            del os.environ['CUEGUI_PLUGIN_PATH']
+
+    def test__should_add_plugin_paths_from_env_var_after_the_configured_ones(self):
+        os.environ['CUEGUI_PLUGIN_PATH'] = os.pathsep.join(['/a/plugins', '', '/b/plugins'])
+
+        import cuegui.Constants
+        result = importlib.reload(cuegui.Constants)
+
+        self.assertEqual(
+            os.path.join(os.path.dirname(cuegui.Constants.__file__), 'plugins'),
+            result.DEFAULT_PLUGIN_PATHS[0])
+        self.assertEqual(['/a/plugins', '/b/plugins'], result.DEFAULT_PLUGIN_PATHS[1:])
 
     def test__should_load_user_config_from_env_var(self):
         config_file_path = '/path/to/config.yaml'
