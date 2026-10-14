@@ -23,6 +23,8 @@ from __future__ import absolute_import
 import unittest
 
 import getpass
+import os
+import tempfile
 import mock
 import qtpy.QtGui
 import qtpy.QtWidgets
@@ -1749,6 +1751,177 @@ class MenuActionsTests(unittest.TestCase):
         self.menuActions.limits()
 
         limitActionsMock.assert_called_with(*self.args)
+
+
+def _layer(name, outputs=()):
+    """A pycue layer as Preview in RV reads it: its name and its recorded outputs."""
+    layer = mock.Mock()
+    layer.name.return_value = name
+    layer.getOutputPaths.return_value = list(outputs)
+    return layer
+
+
+def _depend(er_layer, on_layer, on_job="tree_job"):
+    """A depend of `er_layer`, in tree_job, on `on_layer` in `on_job`."""
+    depend = mock.Mock()
+    depend.dependErJob.return_value = "tree_job"
+    depend.dependOnJob.return_value = on_job
+    depend.dependErLayer.return_value = er_layer
+    depend.dependOnLayer.return_value = on_layer
+    return depend
+
+
+def _job(layers, depends=()):
+    """A real pycue Job wrapper (so cuegui.Utils.isJob accepts it) with its layers and depends."""
+    job = opencue.wrappers.job.Job(opencue_proto.job_pb2.Job(name="tree_job"))
+    job.getLayers = mock.Mock(return_value=list(layers))
+    job.getDepends = mock.Mock(return_value=list(depends))
+    return job
+
+
+IMAGES = "/jobs/x/products/img/beauty/v001/exr/beauty.####.exr"
+CACHE = "/jobs/x/products/geo/cache/v001/bgeo.sc/cache.####.bgeo.sc"
+IFDS = "/jobs/x/temp/ifd/beauty/v001/ifd/beauty.####.ifd"
+
+
+@mock.patch('qtpy.QtWidgets.QMessageBox')
+@mock.patch('cuegui.MenuActions._rvEnvironment', new=mock.Mock(return_value={'RV': '1'}))
+@mock.patch('cuegui.MenuActions.subprocess.Popen')
+class PreviewInRvTests(unittest.TestCase):
+    """Preview in RV plays a job's, or a layer's, recorded output (OP-1119)."""
+
+    def setUp(self):
+        test_utils.createApplication()
+        self.job = None
+        self.job_actions = cuegui.MenuActions.JobActions(mock.Mock(), mock.Mock(), None, None)
+        self.layer_actions = cuegui.MenuActions.LayerActions(
+            mock.Mock(), mock.Mock(), None, lambda: self.job)
+
+    def played(self, popen):
+        """The sequence RV was started with, or None if it wasn't."""
+        return popen.call_args.args[0][1] if popen.called else None
+
+    def preview_job(self, layers, depends=()):
+        self.job = _job(layers, depends)
+        self.job_actions.previewRV(rpcObjects=[self.job])
+
+    def offered(self, get_item):
+        """The outputs the Select Output Path dialog listed, in order, or None if it wasn't shown."""
+        return get_item.call_args.args[3] if get_item.called else None
+
+    @mock.patch('qtpy.QtWidgets.QInputDialog.getItem')
+    def test_a_job_with_one_playable_output_plays_it_without_asking(self, get_item, popen, _box):
+        self.preview_job([_layer("render_geo", [CACHE]), _layer("ifd_generation", [IFDS]),
+                          _layer("render_ifd", [IMAGES]), _layer("record_in_db")])
+
+        self.assertIsNone(self.offered(get_item))
+        self.assertEqual(self.played(popen), "/jobs/x/products/img/beauty/v001/exr/beauty.#.exr")
+
+    @mock.patch('qtpy.QtWidgets.QInputDialog.getItem')
+    def test_the_dialog_lists_the_most_dependent_layer_first(self, get_item, popen, _box):
+        comp, plate = "/c/comp.####.exr", "/p/plate.####.exr"
+        get_item.side_effect = lambda *args: (args[3][args[4]], True)  # accept the default
+
+        self.preview_job(
+            [_layer("comp", [comp]), _layer("ifd_generation", [IFDS]), _layer("plate", [plate])],
+            depends=[_depend("comp", "ifd_generation"), _depend("ifd_generation", "plate")])
+
+        self.assertEqual(self.offered(get_item), [comp, plate])
+        self.assertEqual(self.played(popen), "/c/comp.#.exr")
+
+    @mock.patch('qtpy.QtWidgets.QInputDialog.getItem')
+    def test_of_layers_equally_deep_the_later_one_is_listed_first(self, get_item, _popen, _box):
+        get_item.return_value = ("", False)
+
+        self.preview_job([_layer("beauty", ["/b/beauty.####.exr"]), _layer("matte", ["/m/matte.####.exr"])])
+
+        self.assertEqual(self.offered(get_item), ["/m/matte.####.exr", "/b/beauty.####.exr"])
+
+    @mock.patch('qtpy.QtWidgets.QInputDialog.getItem')
+    def test_rv_plays_the_output_picked_in_the_dialog(self, get_item, popen, _box):
+        get_item.return_value = ("/b/beauty.####.exr", True)
+
+        self.preview_job([_layer("beauty", ["/b/beauty.####.exr"]), _layer("matte", ["/m/matte.####.exr"])])
+
+        self.assertEqual(self.played(popen), "/b/beauty.#.exr")
+
+    @mock.patch('qtpy.QtWidgets.QInputDialog.getItem')
+    def test_cancelling_the_dialog_plays_nothing(self, get_item, popen, _box):
+        get_item.return_value = ("/b/beauty.####.exr", False)
+
+        self.preview_job([_layer("beauty", ["/b/beauty.####.exr"]), _layer("matte", ["/m/matte.####.exr"])])
+
+        self.assertIsNone(self.played(popen))
+
+    @mock.patch('qtpy.QtWidgets.QInputDialog.getItem')
+    def test_a_staggered_layers_halves_are_one_output(self, get_item, popen, _box):
+        self.preview_job([_layer("render", [IMAGES]), _layer("render_remaining", [IMAGES])])
+
+        self.assertIsNone(self.offered(get_item))
+        self.assertEqual(self.played(popen), "/jobs/x/products/img/beauty/v001/exr/beauty.#.exr")
+
+    @mock.patch('qtpy.QtWidgets.QInputDialog.getItem')
+    def test_a_depend_on_another_job_does_not_make_a_layer_deeper(self, get_item, _popen, _box):
+        get_item.return_value = ("", False)
+
+        self.preview_job([_layer("comp", ["/c/comp.####.exr"]), _layer("matte", ["/m/matte.####.exr"])],
+                         depends=[_depend("comp", "render", on_job="other_job")])
+
+        self.assertEqual(self.offered(get_item), ["/m/matte.####.exr", "/c/comp.####.exr"])
+
+    @mock.patch('cuegui.Utils.getFrameLogFile')
+    def test_a_job_that_records_no_outputs_plays_the_output_path_in_its_log(self, log_file, popen, _box):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = os.path.join(tmp, "frame.rqlog")
+            with open(log, "w") as handle:
+                handle.write("OUTPUT_PATH=/jobs/x/products/img/old/v001/exr/old.%04d.exr\n")
+            log_file.return_value = log
+            layer = _layer("render")
+            layer.getFrames.return_value = [mock.Mock()]
+
+            self.preview_job([layer])
+
+        self.assertEqual(self.played(popen), "/jobs/x/products/img/old/v001/exr/old.#.exr")
+
+    def test_a_layer_plays_its_own_output(self, popen, _box):
+        self.job = _job([])
+
+        self.layer_actions.previewRV(rpcObjects=[opencue_layer("render_ifd", [IMAGES])])
+
+        self.assertEqual(self.played(popen), "/jobs/x/products/img/beauty/v001/exr/beauty.#.exr")
+
+    def test_a_layer_without_playable_output_says_so_and_plays_nothing(self, popen, box):
+        self.job = _job([])
+
+        self.layer_actions.previewRV(rpcObjects=[opencue_layer("render_geo", [CACHE])])
+
+        self.assertIsNone(self.played(popen))
+        box.information.assert_called_once()
+
+    @mock.patch('qtpy.QtWidgets.QInputDialog.getItem')
+    def test_several_selected_layers_are_offered_most_dependent_first(self, get_item, _popen, _box):
+        self.job = _job([], depends=[_depend("comp", "plate")])
+        get_item.return_value = ("", False)
+
+        self.layer_actions.previewRV(rpcObjects=[opencue_layer("comp", ["/c/comp.####.exr"]),
+                                                 opencue_layer("plate", ["/p/plate.####.exr"])])
+
+        self.assertEqual(self.offered(get_item), ["/c/comp.####.exr", "/p/plate.####.exr"])
+
+    def test_rv_gets_its_own_frame_notation_for_every_padding_style(self, popen, _box):
+        for pattern, expected in [("/r/a.####.exr", "/r/a.#.exr"), ("/r/a.%04d.exr", "/r/a.#.exr"),
+                                  ("/r/a.$F4.exr", "/r/a.#.exr"), ("/r/a.###.exr", "/r/a.@@@.exr")]:
+            with self.subTest(pattern=pattern):
+                self.preview_job([_layer("render", [pattern])])
+
+                self.assertEqual(self.played(popen), expected)
+
+
+def opencue_layer(name, outputs):
+    """A real pycue Layer wrapper (so cuegui.Utils.isLayer accepts it) with recorded outputs."""
+    layer = opencue.wrappers.layer.Layer(opencue_proto.job_pb2.Layer(name=name))
+    layer.getOutputPaths = mock.Mock(return_value=list(outputs))
+    return layer
 
 
 if __name__ == '__main__':

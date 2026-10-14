@@ -244,6 +244,7 @@ class LayerMonitorTree(cuegui.AbstractTreeWidget.AbstractTreeWidget):
         menu = QtWidgets.QMenu()
 
         self.__menuActions.layers().addAction(menu, "view")
+        self.__menuActions.layers().addAction(menu, "previewRV")
         self.__menuActions.layers().addAction(menu, "copyLayerName")
 
         if (len(cuegui.Constants.OUTPUT_VIEWERS) > 0

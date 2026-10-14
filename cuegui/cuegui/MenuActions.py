@@ -818,169 +818,271 @@ class JobActions(AbstractActions):
     previewRV_info = ["Preview in RV", "Preview job in RV viewer", "view"]
 
     def previewRV(self, rpcObjects=None):
-        """Launch RV to preview the selected job(s)"""
+        """Play the selected job's output in RV.
+
+        Each layer's main output that RV can play is offered, most dependent first (see _rvOutputs);
+        with only one, it plays straight away. A job whose layers record no outputs, from before
+        they did or from a submitter that doesn't yet, falls back to the OUTPUT_PATH in its first
+        frame's log.
+        """
         jobs = self._getOnlyJobObjects(rpcObjects)
-
-        if jobs:
-            try:
-                layers = jobs[0].getLayers()
-                if layers:
-                    for layer in layers:
-                        first_frame = layer.getFrames()[0]
-                        log_path = cuegui.Utils.getFrameLogFile(jobs[0], first_frame)
-
-                        # Find OUTPUT_PATH in the log file
-                        output_path = None
-                        is_quoted_format = False
-                        job_name = None
-                        shot = None
-
-                        if os.path.exists(log_path):
-                            with open(log_path, "r", errors="ignore") as f:
-                                content = f.read()
-                                # Look for OUTPUT_PATH in the log - try quoted format first (list), then unquoted (single value)
-                                is_quoted_format = False
-                                match = re.search(r"OUTPUT_PATH='(.*?)'(?:\s|$)", content, re.DOTALL)
-                                if match:
-                                    is_quoted_format = True
-                                    output_path = match.group(1)
-                                else:
-                                    # Try unquoted format for single values
-                                    match = re.search(r"OUTPUT_PATH=([^\s\n]+)", content)
-                                    if match:
-                                        output_path = match.group(1)
-
-                                match_shot = re.search(r"shot=([^\s\n]+)", content)
-                                if match_shot:
-                                    shot = match_shot.group(1).replace("_", "/")
-
-                                match_job = re.search(r"show=([^\s\n]+)", content)
-                                if match_job:
-                                    job_name = match_job.group(1)
-
-                        if not output_path:
-                            QtWidgets.QMessageBox.warning(
-                                self._caller,
-                                "Job not supported",
-                                "This job is not supported for RV preview.",
-                                QtWidgets.QMessageBox.Ok,
-                            )
-                            return
-                        else:
-                            if is_quoted_format:
-                                # Handle shell-escaped quotes: '"'"' -> '
-                                output_path = output_path.replace("'\"'\"'\"'", "'")
-                                output_path = ast.literal_eval(output_path)
-                                # Remove extra double quotes from each path in the list
-                                if isinstance(output_path, list):
-                                    output_path = [path.strip("\"'") for path in output_path]
-                            # If not quoted format, output_path is already a plain string path
-
-                            if isinstance(output_path, list):
-                                # ask the user which one to preview.
-                                if not output_path:
-                                    QtWidgets.QMessageBox.warning(
-                                        self._caller,
-                                        "No Output Paths",
-                                        "Render log reported an empty list of output paths.",
-                                        QtWidgets.QMessageBox.Ok,
-                                    )
-                                    return
-
-                                print(f"Job: {job_name}, Shot: {shot}")
-                                if len(output_path) == 1:
-                                    output_path = output_path[0]
-
-                                elif job_name and shot:
-                                    start_path = f"/jobs/{job_name}/{shot}/"
-                                    print(f"Looking for paths starting with: {start_path}")
-                                    output_path = [p for p in output_path if p.startswith(start_path)]
-                                    if len(output_path) == 1:
-                                        output_path = output_path[0]
-
-                                if isinstance(output_path, list):
-                                    # Ensure all entries are strings for display
-                                    output_items = [str(p) for p in output_path]
-                                    # Offer a choice dialog
-                                    choice, ok = QtWidgets.QInputDialog.getItem(
-                                        self._caller,
-                                        "Select Output Path",
-                                        "Select render output to preview:",
-                                        output_items,
-                                        0,
-                                        False,
-                                    )
-                                    if not ok:
-                                        # User cancelled selection
-                                        return
-
-                                    output_path = choice
-
-                            # Convert %04d pattern to # for RV
-                            if "%" in output_path:
-                                output_path = re.sub(r"%\d*d", "#", output_path)
-                            elif "$F" in output_path:
-                                output_path = re.sub(r"\$F\d*", "#", output_path)
-
-                            cmd = ["rv", output_path]
-
-                        # Launch RV
-                        logger.info(f"Launching RV with command: {' '.join(cmd)}")
-                        rv_env = self.get_rv_env()
-                        if not rv_env:
-                            QtWidgets.QMessageBox.critical(
-                                self._caller,
-                                "RV Launch Failed",
-                                "Failed to launch RV. Please check the logs for more information.",
-                                QtWidgets.QMessageBox.Ok,
-                            )
-                            return
-                        subprocess.Popen(cmd, env=rv_env)
-
-                        break  # Only launch RV for the first layer found
-
-            except Exception as e:
-                logger.exception("Failed to launch RV")
-                QtWidgets.QMessageBox.critical(
-                    self._caller, "RV Launch Failed", f"Failed to launch RV: {str(e)}", QtWidgets.QMessageBox.Ok
-                )
-
-    def get_rv_env(self):
-        """Get the RV environment variables."""
-        # Get the directory where this script is located
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        env_path = os.path.join(current_dir, "rv_environment.json")
-        logger.debug(f"Loading RV environment from {env_path}")
+        if not jobs:
+            return
         try:
-            with open(env_path, "r") as f:
-                loaded_env = json.load(f)
-
-            if not loaded_env:
-                logger.error(f"No environment variables found in {env_path}")
-                return
-
-            # Start with the current environment and update with the loaded one
-            merged_env = os.environ.copy()
-            merged_env.update(loaded_env)
-
-            # Ensure HOME is set
-            if "HOME" not in merged_env or not merged_env["HOME"]:
-                user_home = os.path.expanduser("~")
-                logger.warning(f"HOME not set in environment. Setting to {user_home}")
-                merged_env["HOME"] = user_home
-
-            merged_env["OCIO"] = "/od/jobs_default_data/odcolor/config.ocio"
-            merged_env["SHOT_CDL"] = "/od/jobs_default_data/odcolor/neutral.cdl"
-            # Use the merged environment to launch RV
-            return merged_env
-
-        except FileNotFoundError:
-            logger.error(f"Environment file {env_path} not found")
-        except json.JSONDecodeError:
-            logger.error(f"Invalid JSON in {env_path}")
+            job = jobs[0]
+            patterns = _rvOutputs(job, job.getLayers())
+            if patterns:
+                pattern = _chooseRvOutput(self._caller, patterns)
+            else:
+                pattern = self._outputPathFromLog(job)
+            if pattern:
+                _launchRv(self._caller, pattern)
         except Exception as e:
-            logger.error(f"Failed to launch RV: {e}")
+            logger.exception("Failed to launch RV")
+            QtWidgets.QMessageBox.critical(
+                self._caller, "RV Launch Failed", f"Failed to launch RV: {str(e)}",
+                QtWidgets.QMessageBox.Ok)
 
+    def _outputPathFromLog(self, job):
+        """The OUTPUT_PATH the submitting session exported, read from the job's first frame log.
+
+        Every layer of the job shares it, so a job with several outputs names whichever one the
+        artist's session set last. Returns None, after telling the user why, if there is none.
+        """
+        layers = job.getLayers()
+        if not layers:
+            return None
+        log_path = cuegui.Utils.getFrameLogFile(job, layers[0].getFrames()[0])
+
+        output_path = None
+        is_quoted_format = False
+        job_name = None
+        shot = None
+
+        if os.path.exists(log_path):
+            with open(log_path, "r", errors="ignore") as f:
+                content = f.read()
+                # Look for OUTPUT_PATH in the log - try quoted format first (list), then unquoted (single value)
+                match = re.search(r"OUTPUT_PATH='(.*?)'(?:\s|$)", content, re.DOTALL)
+                if match:
+                    is_quoted_format = True
+                    output_path = match.group(1)
+                else:
+                    # Try unquoted format for single values
+                    match = re.search(r"OUTPUT_PATH=([^\s\n]+)", content)
+                    if match:
+                        output_path = match.group(1)
+
+                match_shot = re.search(r"shot=([^\s\n]+)", content)
+                if match_shot:
+                    shot = match_shot.group(1).replace("_", "/")
+
+                match_job = re.search(r"show=([^\s\n]+)", content)
+                if match_job:
+                    job_name = match_job.group(1)
+
+        if not output_path:
+            QtWidgets.QMessageBox.warning(
+                self._caller,
+                "Job not supported",
+                "This job is not supported for RV preview.",
+                QtWidgets.QMessageBox.Ok,
+            )
+            return None
+
+        if is_quoted_format:
+            # Handle shell-escaped quotes: '"'"' -> '
+            output_path = output_path.replace("'\"'\"'\"'", "'")
+            output_path = ast.literal_eval(output_path)
+            # Remove extra double quotes from each path in the list
+            if isinstance(output_path, list):
+                output_path = [path.strip("\"'") for path in output_path]
+        # If not quoted format, output_path is already a plain string path
+
+        if isinstance(output_path, list):
+            # ask the user which one to preview.
+            if not output_path:
+                QtWidgets.QMessageBox.warning(
+                    self._caller,
+                    "No Output Paths",
+                    "Render log reported an empty list of output paths.",
+                    QtWidgets.QMessageBox.Ok,
+                )
+                return None
+
+            print(f"Job: {job_name}, Shot: {shot}")
+            if len(output_path) == 1:
+                output_path = output_path[0]
+
+            elif job_name and shot:
+                start_path = f"/jobs/{job_name}/{shot}/"
+                print(f"Looking for paths starting with: {start_path}")
+                output_path = [p for p in output_path if p.startswith(start_path)]
+                if len(output_path) == 1:
+                    output_path = output_path[0]
+
+            if isinstance(output_path, list):
+                # Ensure all entries are strings for display
+                output_items = [str(p) for p in output_path]
+                # Offer a choice dialog
+                choice, ok = QtWidgets.QInputDialog.getItem(
+                    self._caller,
+                    "Select Output Path",
+                    "Select render output to preview:",
+                    output_items,
+                    0,
+                    False,
+                )
+                if not ok:
+                    # User cancelled selection
+                    return None
+
+                output_path = choice
+
+        return output_path
+
+
+# What RV can play. A layer's other outputs (bgeo, IFD, abc, usd) are data for another DCC, so
+# Preview in RV passes over them.
+_RV_EXTENSIONS = frozenset({"exr", "jpg", "jpeg", "png", "tif", "tiff", "dpx", "cin", "mov", "mp4"})
+
+# A frame token in an output pattern: OpenCue's one # per digit, which layers record (a run of #
+# between dots, as FileSequence reads it), printf style (%04d, %d) or Houdini style ($F4, $F).
+_FRAME_TOKEN = re.compile(r"(?<=\.)(#+)(?=\.)|%(\d*)d|\$F(\d*)")
+
+
+def _rvSequence(pattern):
+    """A pattern in RV's notation: # for four-digit padding, one @ per digit otherwise."""
+    def token(match):
+        hashes, printf, houdini = match.groups()
+        width = len(hashes) if hashes else int(printf or houdini or 1)
+        return "#" if width == 4 else "@" * width
+    return _FRAME_TOKEN.sub(token, pattern)
+
+
+def _playable(pattern):
+    """Whether RV can play the files a pattern names, going by their extension."""
+    return os.path.splitext(pattern)[1][1:].lower() in _RV_EXTENSIONS
+
+
+def _layerDepths(job):
+    """How deep each layer of a job sits in its dependency graph, as a function of the layer name.
+
+    A layer that waits on nothing is 0, any other is one more than the deepest layer it waits on.
+    Every depend inside the job counts, of any type and whether or not it is still active, so a
+    finished job ranks its layers the same as a running one.
+    """
+    waits_on = {}
+    for depend in job.getDepends():
+        if (depend.dependErLayer() and depend.dependOnLayer()
+                and depend.dependErJob() == depend.dependOnJob()):
+            waits_on.setdefault(depend.dependErLayer(), set()).add(depend.dependOnLayer())
+
+    depths = {}
+
+    def depth(layer, visiting=frozenset()):
+        if layer not in depths:
+            if layer in visiting:
+                # A cycle, which Cuebot should never accept; count it as no deeper.
+                return 0
+            ons = waits_on.get(layer, ())
+            depths[layer] = 1 + max((depth(on, visiting | {layer}) for on in ons), default=-1)
+        return depths[layer]
+
+    return depth
+
+
+def _rvOutputs(job, layers):
+    """The output patterns Preview in RV can play for some layers of a job, best first.
+
+    A layer's main output is the first it records (layer.getOutputPaths()), and only one RV can
+    play counts. The most dependent layer's comes first, since it renders last: in a dependency
+    tree that is the final images, not the caches or IFDs before them. Of layers equally deep, the
+    later one comes first. A pattern two layers share, as a staggered layer's halves do, is listed
+    once.
+    """
+    candidates = []
+    for layer in layers:
+        outputs = layer.getOutputPaths()
+        if outputs and _playable(outputs[0]):
+            candidates.append((layer.name(), outputs[0]))
+    if len(candidates) > 1:
+        depth = _layerDepths(job)
+        # sorted() is stable, so sorting the reversed list keeps the later layer first in a tie.
+        candidates = sorted(reversed(candidates), key=lambda candidate: depth(candidate[0]),
+                            reverse=True)
+    return list(dict.fromkeys(pattern for _, pattern in candidates))
+
+
+def _chooseRvOutput(caller, patterns):
+    """The pattern to play: the only one, or the one picked from the list, or None if cancelled.
+
+    The list keeps the order it is given in, and the first is selected to start with.
+    """
+    if len(patterns) == 1:
+        return patterns[0]
+    choice, ok = QtWidgets.QInputDialog.getItem(
+        caller,
+        "Select Output Path",
+        "Select render output to preview:",
+        patterns,
+        0,
+        False,
+    )
+    return choice if ok else None
+
+
+def _launchRv(caller, pattern):
+    """Start RV playing an output pattern, in the RV environment from rv_environment.json."""
+    cmd = ["rv", _rvSequence(pattern)]
+    logger.info(f"Launching RV with command: {' '.join(cmd)}")
+    rv_env = _rvEnvironment()
+    if not rv_env:
+        QtWidgets.QMessageBox.critical(
+            caller,
+            "RV Launch Failed",
+            "Failed to launch RV. Please check the logs for more information.",
+            QtWidgets.QMessageBox.Ok,
+        )
+        return
+    subprocess.Popen(cmd, env=rv_env)
+
+
+def _rvEnvironment():
+    """Get the RV environment variables."""
+    # Get the directory where this script is located
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    env_path = os.path.join(current_dir, "rv_environment.json")
+    logger.debug(f"Loading RV environment from {env_path}")
+    try:
+        with open(env_path, "r") as f:
+            loaded_env = json.load(f)
+
+        if not loaded_env:
+            logger.error(f"No environment variables found in {env_path}")
+            return
+
+        # Start with the current environment and update with the loaded one
+        merged_env = os.environ.copy()
+        merged_env.update(loaded_env)
+
+        # Ensure HOME is set
+        if "HOME" not in merged_env or not merged_env["HOME"]:
+            user_home = os.path.expanduser("~")
+            logger.warning(f"HOME not set in environment. Setting to {user_home}")
+            merged_env["HOME"] = user_home
+
+        merged_env["OCIO"] = "/od/jobs_default_data/odcolor/config.ocio"
+        merged_env["SHOT_CDL"] = "/od/jobs_default_data/odcolor/neutral.cdl"
+        # Use the merged environment to launch RV
+        return merged_env
+
+    except FileNotFoundError:
+        logger.error(f"Environment file {env_path} not found")
+    except json.JSONDecodeError:
+        logger.error(f"Invalid JSON in {env_path}")
+    except Exception as e:
+        logger.error(f"Failed to launch RV: {e}")
 
 class LayerActions(AbstractActions):
     """Actions for layers."""
@@ -1003,6 +1105,33 @@ class LayerActions(AbstractActions):
         if layers:
             names = [layer.data.name for layer in layers]
             QtWidgets.QApplication.clipboard().setText(" ".join(names), QtGui.QClipboard.Clipboard)
+
+    previewRV_info = ["Preview in RV", "Preview the layer's output in RV viewer", "view"]
+
+    def previewRV(self, rpcObjects=None):
+        """Play the selected layer's main output in RV, or pick from several selected layers'.
+
+        Unlike the job action this never falls back to OUTPUT_PATH: that is one value for the
+        whole job, so it says nothing about which layer wrote it.
+        """
+        layers = self._getOnlyLayerObjects(rpcObjects)
+        if not layers:
+            return
+        try:
+            patterns = _rvOutputs(self._getSource(), layers)
+            if not patterns:
+                QtWidgets.QMessageBox.information(
+                    self._caller, "Nothing to preview", "This layer writes nothing RV can play.",
+                    QtWidgets.QMessageBox.Ok)
+                return
+            pattern = _chooseRvOutput(self._caller, patterns)
+            if pattern:
+                _launchRv(self._caller, pattern)
+        except Exception as e:
+            logger.exception("Failed to launch RV")
+            QtWidgets.QMessageBox.critical(
+                self._caller, "RV Launch Failed", f"Failed to launch RV: {str(e)}",
+                QtWidgets.QMessageBox.Ok)
 
     viewDepends_info = ["&View Dependencies...", None, "log"]
 

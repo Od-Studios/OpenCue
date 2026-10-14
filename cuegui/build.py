@@ -59,7 +59,8 @@ def build(source_path: str, build_path: str, install_path: str, targets: List[st
         bin_build_dir = os.path.join(build_path, "cuegui", "bin")
         logger.debug(f"Copying bin directory from {bin_build_dir}")
         if os.path.exists(bin_build_dir):
-            shutil.copytree(bin_build_dir, os.path.join(build_path, "bin"))
+            # The build path persists between builds, so a bin from the last one may already be there.
+            shutil.copytree(bin_build_dir, os.path.join(build_path, "bin"), dirs_exist_ok=True)
 
     def _install():
         logger.info("Installing files and directories")
