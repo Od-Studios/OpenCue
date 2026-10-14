@@ -1805,36 +1805,69 @@ class PreviewInRvTests(unittest.TestCase):
         self.job = _job(layers, depends)
         self.job_actions.previewRV(rpcObjects=[self.job])
 
-    def test_a_job_plays_its_image_layer_not_its_cache_ifd_or_database_layers(self, popen, _box):
+    def offered(self, get_item):
+        """The outputs the Select Output Path dialog listed, in order, or None if it wasn't shown."""
+        return get_item.call_args.args[3] if get_item.called else None
+
+    @mock.patch('qtpy.QtWidgets.QInputDialog.getItem')
+    def test_a_job_with_one_playable_output_plays_it_without_asking(self, get_item, popen, _box):
         self.preview_job([_layer("render_geo", [CACHE]), _layer("ifd_generation", [IFDS]),
                           _layer("render_ifd", [IMAGES]), _layer("record_in_db")])
 
+        self.assertIsNone(self.offered(get_item))
         self.assertEqual(self.played(popen), "/jobs/x/products/img/beauty/v001/exr/beauty.#.exr")
 
-    def test_the_most_dependent_layer_wins_whatever_its_place_in_the_job(self, popen, _box):
+    @mock.patch('qtpy.QtWidgets.QInputDialog.getItem')
+    def test_the_dialog_lists_the_most_dependent_layer_first(self, get_item, popen, _box):
         comp, plate = "/c/comp.####.exr", "/p/plate.####.exr"
+        get_item.side_effect = lambda *args: (args[3][args[4]], True)  # accept the default
+
         self.preview_job(
             [_layer("comp", [comp]), _layer("ifd_generation", [IFDS]), _layer("plate", [plate])],
             depends=[_depend("comp", "ifd_generation"), _depend("ifd_generation", "plate")])
 
+        self.assertEqual(self.offered(get_item), [comp, plate])
         self.assertEqual(self.played(popen), "/c/comp.#.exr")
 
-    def test_of_layers_equally_deep_the_later_one_wins(self, popen, _box):
+    @mock.patch('qtpy.QtWidgets.QInputDialog.getItem')
+    def test_of_layers_equally_deep_the_later_one_is_listed_first(self, get_item, _popen, _box):
+        get_item.return_value = ("", False)
+
         self.preview_job([_layer("beauty", ["/b/beauty.####.exr"]), _layer("matte", ["/m/matte.####.exr"])])
 
-        self.assertEqual(self.played(popen), "/m/matte.#.exr")
+        self.assertEqual(self.offered(get_item), ["/m/matte.####.exr", "/b/beauty.####.exr"])
 
-    def test_a_layer_that_writes_nothing_playable_never_wins(self, popen, _box):
-        self.preview_job([_layer("render", [IMAGES]), _layer("record_in_db")],
-                         depends=[_depend("record_in_db", "render")])
+    @mock.patch('qtpy.QtWidgets.QInputDialog.getItem')
+    def test_rv_plays_the_output_picked_in_the_dialog(self, get_item, popen, _box):
+        get_item.return_value = ("/b/beauty.####.exr", True)
 
+        self.preview_job([_layer("beauty", ["/b/beauty.####.exr"]), _layer("matte", ["/m/matte.####.exr"])])
+
+        self.assertEqual(self.played(popen), "/b/beauty.#.exr")
+
+    @mock.patch('qtpy.QtWidgets.QInputDialog.getItem')
+    def test_cancelling_the_dialog_plays_nothing(self, get_item, popen, _box):
+        get_item.return_value = ("/b/beauty.####.exr", False)
+
+        self.preview_job([_layer("beauty", ["/b/beauty.####.exr"]), _layer("matte", ["/m/matte.####.exr"])])
+
+        self.assertIsNone(self.played(popen))
+
+    @mock.patch('qtpy.QtWidgets.QInputDialog.getItem')
+    def test_a_staggered_layers_halves_are_one_output(self, get_item, popen, _box):
+        self.preview_job([_layer("render", [IMAGES]), _layer("render_remaining", [IMAGES])])
+
+        self.assertIsNone(self.offered(get_item))
         self.assertEqual(self.played(popen), "/jobs/x/products/img/beauty/v001/exr/beauty.#.exr")
 
-    def test_a_depend_on_another_job_does_not_make_a_layer_deeper(self, popen, _box):
+    @mock.patch('qtpy.QtWidgets.QInputDialog.getItem')
+    def test_a_depend_on_another_job_does_not_make_a_layer_deeper(self, get_item, _popen, _box):
+        get_item.return_value = ("", False)
+
         self.preview_job([_layer("comp", ["/c/comp.####.exr"]), _layer("matte", ["/m/matte.####.exr"])],
                          depends=[_depend("comp", "render", on_job="other_job")])
 
-        self.assertEqual(self.played(popen), "/m/matte.#.exr")
+        self.assertEqual(self.offered(get_item), ["/m/matte.####.exr", "/c/comp.####.exr"])
 
     @mock.patch('cuegui.Utils.getFrameLogFile')
     def test_a_job_that_records_no_outputs_plays_the_output_path_in_its_log(self, log_file, popen, _box):
@@ -1864,6 +1897,16 @@ class PreviewInRvTests(unittest.TestCase):
 
         self.assertIsNone(self.played(popen))
         box.information.assert_called_once()
+
+    @mock.patch('qtpy.QtWidgets.QInputDialog.getItem')
+    def test_several_selected_layers_are_offered_most_dependent_first(self, get_item, _popen, _box):
+        self.job = _job([], depends=[_depend("comp", "plate")])
+        get_item.return_value = ("", False)
+
+        self.layer_actions.previewRV(rpcObjects=[opencue_layer("comp", ["/c/comp.####.exr"]),
+                                                 opencue_layer("plate", ["/p/plate.####.exr"])])
+
+        self.assertEqual(self.offered(get_item), ["/c/comp.####.exr", "/p/plate.####.exr"])
 
     def test_rv_gets_its_own_frame_notation_for_every_padding_style(self, popen, _box):
         for pattern, expected in [("/r/a.####.exr", "/r/a.#.exr"), ("/r/a.%04d.exr", "/r/a.#.exr"),

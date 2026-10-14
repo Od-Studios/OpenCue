@@ -818,18 +818,23 @@ class JobActions(AbstractActions):
     previewRV_info = ["Preview in RV", "Preview job in RV viewer", "view"]
 
     def previewRV(self, rpcObjects=None):
-        """Play the selected job's main output in RV.
+        """Play the selected job's output in RV.
 
-        That is the main output of its most dependent layer that writes something RV can play (see
-        _mainRvOutput). A job whose layers record no outputs, from before they did or from a
-        submitter that doesn't yet, falls back to the OUTPUT_PATH in its first frame's log.
+        Each layer's main output that RV can play is offered, most dependent first (see _rvOutputs);
+        with only one, it plays straight away. A job whose layers record no outputs, from before
+        they did or from a submitter that doesn't yet, falls back to the OUTPUT_PATH in its first
+        frame's log.
         """
         jobs = self._getOnlyJobObjects(rpcObjects)
         if not jobs:
             return
         try:
             job = jobs[0]
-            pattern = _mainRvOutput(job, job.getLayers()) or self._outputPathFromLog(job)
+            patterns = _rvOutputs(job, job.getLayers())
+            if patterns:
+                pattern = _chooseRvOutput(self._caller, patterns)
+            else:
+                pattern = self._outputPathFromLog(job)
             if pattern:
                 _launchRv(self._caller, pattern)
         except Exception as e:
@@ -987,24 +992,44 @@ def _layerDepths(job):
     return depth
 
 
-def _mainRvOutput(job, layers):
-    """The output pattern Preview in RV plays for some layers of a job, or None if none has one.
+def _rvOutputs(job, layers):
+    """The output patterns Preview in RV can play for some layers of a job, best first.
 
     A layer's main output is the first it records (layer.getOutputPaths()), and only one RV can
-    play counts. Of several, the most dependent layer's wins, since it renders last: in a
-    dependency tree that is the final images, not the caches or IFDs before them. Of layers equally
-    deep, the later one wins.
+    play counts. The most dependent layer's comes first, since it renders last: in a dependency
+    tree that is the final images, not the caches or IFDs before them. Of layers equally deep, the
+    later one comes first. A pattern two layers share, as a staggered layer's halves do, is listed
+    once.
     """
     candidates = []
     for layer in layers:
         outputs = layer.getOutputPaths()
         if outputs and _playable(outputs[0]):
             candidates.append((layer.name(), outputs[0]))
-    if len(candidates) < 2:
-        return candidates[0][1] if candidates else None
-    depth = _layerDepths(job)
-    # max() keeps the first of equal keys, so reversing makes the later layer win a tie.
-    return max(reversed(candidates), key=lambda candidate: depth(candidate[0]))[1]
+    if len(candidates) > 1:
+        depth = _layerDepths(job)
+        # sorted() is stable, so sorting the reversed list keeps the later layer first in a tie.
+        candidates = sorted(reversed(candidates), key=lambda candidate: depth(candidate[0]),
+                            reverse=True)
+    return list(dict.fromkeys(pattern for _, pattern in candidates))
+
+
+def _chooseRvOutput(caller, patterns):
+    """The pattern to play: the only one, or the one picked from the list, or None if cancelled.
+
+    The list keeps the order it is given in, and the first is selected to start with.
+    """
+    if len(patterns) == 1:
+        return patterns[0]
+    choice, ok = QtWidgets.QInputDialog.getItem(
+        caller,
+        "Select Output Path",
+        "Select render output to preview:",
+        patterns,
+        0,
+        False,
+    )
+    return choice if ok else None
 
 
 def _launchRv(caller, pattern):
@@ -1084,7 +1109,7 @@ class LayerActions(AbstractActions):
     previewRV_info = ["Preview in RV", "Preview the layer's output in RV viewer", "view"]
 
     def previewRV(self, rpcObjects=None):
-        """Play the selected layer's main output in RV, or the most dependent one's of several.
+        """Play the selected layer's main output in RV, or pick from several selected layers'.
 
         Unlike the job action this never falls back to OUTPUT_PATH: that is one value for the
         whole job, so it says nothing about which layer wrote it.
@@ -1093,13 +1118,15 @@ class LayerActions(AbstractActions):
         if not layers:
             return
         try:
-            pattern = _mainRvOutput(self._getSource(), layers)
-            if pattern:
-                _launchRv(self._caller, pattern)
-            else:
+            patterns = _rvOutputs(self._getSource(), layers)
+            if not patterns:
                 QtWidgets.QMessageBox.information(
                     self._caller, "Nothing to preview", "This layer writes nothing RV can play.",
                     QtWidgets.QMessageBox.Ok)
+                return
+            pattern = _chooseRvOutput(self._caller, patterns)
+            if pattern:
+                _launchRv(self._caller, pattern)
         except Exception as e:
             logger.exception("Failed to launch RV")
             QtWidgets.QMessageBox.critical(
