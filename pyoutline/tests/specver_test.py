@@ -64,26 +64,50 @@ class SpecVersiondTest(unittest.TestCase):
         self.assertEqual(root.find("job/layers/layer/timeout_llu").text, "4200")
         self.assertEqual(root.find("job/priority").text, "42")
 
-    def _makeGpuSpec(self):
+    def _makeGpuSpec(self, **gpu_args):
         ol = outline.Outline(name="spec_version_test")
         layer = outline.modules.shell.Shell("test_layer", command=["/bin/ls"])
-        layer.set_arg("gpus", 4)
-        layer.set_arg("gpu_memory", 8 * 1024 * 1024)
+        for name, value in gpu_args.items():
+            layer.set_arg(name, value)
         ol.add_layer(layer)
         l = outline.cuerun.OutlineLauncher(ol)
         return Et.fromstring(l.serialize())
 
     def test_gpu_1_11(self):
         outline.config.set("outline", "spec_version", "1.11")
-        root = self._makeGpuSpec()
+        root = self._makeGpuSpec(gpus=4, gpu_memory=8 * 1024 * 1024)
         self.assertIsNone(root.find("job/layers/layer/gpus"))
-        self.assertIsNone(root.find("job/layers/layer/gpus_memory"))
+        self.assertIsNone(root.find("job/layers/layer/gpu_memory"))
 
     def test_gpu_1_12(self):
         outline.config.set("outline", "spec_version", "1.12")
-        root = self._makeGpuSpec()
+        root = self._makeGpuSpec(gpus=4, gpu_memory=8 * 1024 * 1024)
         self.assertEqual(root.find("job/layers/layer/gpus").text, "4")
         self.assertEqual(root.find("job/layers/layer/gpu_memory").text, "8388608")
+
+    def test_a_layer_that_sets_only_gpu_memory_asks_for_no_gpus(self):
+        outline.config.set("outline", "spec_version", "1.12")
+        root = self._makeGpuSpec(gpu_memory="9g")
+        self.assertEqual(root.find("job/layers/layer/gpus").text, "0")
+
+    def test_a_layer_that_sets_only_gpus_reserves_the_default_gpu_memory(self):
+        outline.config.set("outline", "spec_version", "1.12")
+        root = self._makeGpuSpec(gpus=2)
+        self.assertEqual(root.find("job/layers/layer/gpu_memory").text, "1g")
+
+    def test_a_layer_that_sets_no_gpu_args_has_no_gpu_elements(self):
+        outline.config.set("outline", "spec_version", "1.12")
+        root = self._makeGpuSpec()
+        self.assertEqual(
+            [root.find("job/layers/layer/gpus"), root.find("job/layers/layer/gpu_memory")],
+            [None, None])
+
+    def test_gpu_memory_only_below_1_12_has_no_gpu_elements(self):
+        outline.config.set("outline", "spec_version", "1.11")
+        root = self._makeGpuSpec(gpu_memory="9g")
+        self.assertEqual(
+            [root.find("job/layers/layer/gpus"), root.find("job/layers/layer/gpu_memory")],
+            [None, None])
 
     def _makeMaxCoresGpusSpec(self):
         ol = outline.Outline(name="override_max_cores_and_gpus", maxcores=8, maxgpus=7)

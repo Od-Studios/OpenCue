@@ -1,6 +1,6 @@
 name = "pyoutline"
 
-version = "1.4.13"
+version = "1.4.14"
 
 authors = ["Open Cue"]
 

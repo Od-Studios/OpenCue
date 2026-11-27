@@ -353,9 +353,12 @@ def _serialize(launcher, use_pycuerun):
                 _warning_spec_version(spec_version, "gpu_memory")
 
         if gpus or gpu_memory:
-            # Cuebot expects non-zero positive value on gpus and gpu_memory
+            # A layer with gpus=0 and a gpu_memory reservation is booked by
+            # GPU memory alone, so frames share a card while their
+            # reservations fit. Write gpus=0 explicitly so the layer doesn't
+            # pick up the service's GPU minimum.
             if gpus is None:
-                gpus = 1
+                gpus = 0
             if gpu_memory is None:
                 gpu_memory = "1g"
 
