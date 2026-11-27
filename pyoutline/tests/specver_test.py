@@ -85,29 +85,31 @@ class SpecVersiondTest(unittest.TestCase):
         self.assertEqual(root.find("job/layers/layer/gpus").text, "4")
         self.assertEqual(root.find("job/layers/layer/gpu_memory").text, "8388608")
 
+    @staticmethod
+    def _gpuElements(root):
+        """The text of the layer's <gpus> and <gpu_memory>, None where absent."""
+        elements = [root.find("job/layers/layer/gpus"), root.find("job/layers/layer/gpu_memory")]
+        return [None if element is None else element.text for element in elements]
+
     def test_a_layer_that_sets_only_gpu_memory_asks_for_no_gpus(self):
         outline.config.set("outline", "spec_version", "1.12")
         root = self._makeGpuSpec(gpu_memory="9g")
-        self.assertEqual(root.find("job/layers/layer/gpus").text, "0")
+        self.assertEqual(self._gpuElements(root), ["0", "9g"])
 
     def test_a_layer_that_sets_only_gpus_reserves_the_default_gpu_memory(self):
         outline.config.set("outline", "spec_version", "1.12")
         root = self._makeGpuSpec(gpus=2)
-        self.assertEqual(root.find("job/layers/layer/gpu_memory").text, "1g")
+        self.assertEqual(self._gpuElements(root), ["2", "1g"])
 
     def test_a_layer_that_sets_no_gpu_args_has_no_gpu_elements(self):
         outline.config.set("outline", "spec_version", "1.12")
         root = self._makeGpuSpec()
-        self.assertEqual(
-            [root.find("job/layers/layer/gpus"), root.find("job/layers/layer/gpu_memory")],
-            [None, None])
+        self.assertEqual(self._gpuElements(root), [None, None])
 
-    def test_gpu_memory_only_below_1_12_has_no_gpu_elements(self):
+    def test_a_layer_below_spec_1_12_has_no_gpu_elements(self):
         outline.config.set("outline", "spec_version", "1.11")
         root = self._makeGpuSpec(gpu_memory="9g")
-        self.assertEqual(
-            [root.find("job/layers/layer/gpus"), root.find("job/layers/layer/gpu_memory")],
-            [None, None])
+        self.assertEqual(self._gpuElements(root), [None, None])
 
     def _makeMaxCoresGpusSpec(self):
         ol = outline.Outline(name="override_max_cores_and_gpus", maxcores=8, maxgpus=7)
